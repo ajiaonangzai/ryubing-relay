@@ -8,32 +8,29 @@ jobs:
   fetch:
     runs-on: ubuntu-latest
     steps:
-      - name: Resolve and download latest Ryubing win_x64 from canonical
+      - name: Probe canonical endpoints (diagnostic)
         run: |
-          set -e
-          DL=""
+          set +e
+          : > diag.txt
           for api in \
             "https://git.ryujinx.app/api/v1/repos/Ryubing/ryujinx/releases/latest" \
-            "https://git.ryujinx.app/api/v1/repos/ryubing/ryujinx/releases/latest"; do
-            echo "== API: $api"
-            if curl -fsSL --max-time 30 "$api" -o rel.json 2>/dev/null; then
-              url=$(jq -r '.assets[]?.browser_download_url // empty' rel.json | grep -iE 'win_x64.*\.zip$' | head -n1)
-              if [ -n "$url" ]; then echo "api_url=$url"; DL=$url; break; fi
-            fi
+            "https://git.ryujinx.app/projects/Ryubing/releases/download/1.3.3/ryujinx-1.3.3-win_x64.zip"; do
+            echo "==== $api" >> diag.txt
+            curl -sSL --max-time 40 -w "\nHTTP=%{http_code} TIME=%{time_total}\n" "$api" -o dl.bin >> diag.txt 2>&1
+            echo "bytes=$(stat -c%s dl.bin 2>/dev/null || wc -c < dl.bin)" >> diag.txt
+            file dl.bin >> diag.txt 2>&1
+            head -c 300 dl.bin >> diag.txt 2>&1; echo >> diag.txt
+            rm -f dl.bin
           done
-          if [ -z "$DL" ]; then
-            DL="https://git.ryujinx.app/projects/Ryubing/releases/download/1.3.3/ryujinx-1.3.3-win_x64.zip"
-            echo "fallback_url=$DL"
-          fi
-          echo "DL=$DL"
-          curl -fsSL --max-time 180 -o ryujinx.zip "$DL"
-          ls -la ryujinx.zip
-          echo "source_url=$DL" > meta.txt
-          sha256sum ryujinx.zip | tee -a meta.txt
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
+          echo "== DNS getent ==" >> diag.txt
+          getent hosts git.ryujinx.app >> diag.txt 2>&1
+          echo "== DNS nslookup ==" >> diag.txt
+          nslookup git.ryujinx.app >> diag.txt 2>&1
+          exit 0
+      - name: Commit diagnostics
         run: |
-          notes=$(cat meta.txt)
-          tag="relay-$(date +%s)"
-          gh release create "$tag" ryujinx.zip --repo "${{ github.repository }}" --title "ryubing-win-x64" --notes "$notes"
+          git config user.email "relay@users.noreply.github.com"
+          git config user.name "relay"
+          git add diag.txt
+          git commit -m "diag $(date +%s)" || true
+          git push origin HEAD:main || echo "push failed"
